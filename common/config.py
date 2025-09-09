@@ -1,0 +1,15 @@
+import os
+class Settings:
+    postgres_host=os.getenv('POSTGRES_HOST','postgres')
+    postgres_port=int(os.getenv('POSTGRES_PORT','5432'))
+    postgres_db=os.getenv('POSTGRES_DB','launchtg')
+    postgres_user=os.getenv('POSTGRES_USER','launchtg')
+    postgres_password=os.getenv('POSTGRES_PASSWORD','launchtg')
+    redis_url=os.getenv('REDIS_URL','redis://redis:6379/0')
+    api_host=os.getenv('API_HOST','0.0.0.0')
+    api_port=int(os.getenv('API_PORT','8000'))
+    secret_key=os.getenv('SECRET_KEY','dev')
+    telegram_api_id=int(os.getenv('TELEGRAM_API_ID','0'))
+    telegram_api_hash=os.getenv('TELEGRAM_API_HASH','')
+    sessions_dir=os.getenv('SESSIONS_DIR','infra/sessions')
+settings = Settings()
