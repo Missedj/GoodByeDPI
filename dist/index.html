@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="ru" class="h-full">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LaunchTG Admin</title>
+  <!-- Tailwind CDN (dev) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f5f8ff',
+              100: '#e8efff',
+              200: '#cfe0ff',
+              300: '#a9c6ff',
+              400: '#7aa4ff',
+              500: '#4b80ff',
+              600: '#2b5fed',
+              700: '#214ac1',
+              800: '#1b3c9a',
+              900: '#182f75'
+            }
+          },
+          boxShadow: {
+            soft: '0 10px 30px -12px rgba(0,0,0,0.25)'
+          }
+        }
+      }
+    }
+  </script>
+  <!-- React 18 UMD + Babel-in-browser (dev only) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* Smooth scrolling + nicer scrollbars */
+    html { scroll-behavior: smooth; }
+    ::-webkit-scrollbar { height: 10px; width: 10px; }
+    ::-webkit-scrollbar-thumb { background: rgba(100,100,100,0.3); border-radius: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+  </style>
+</head>
+<body class="h-full bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 text-slate-800 dark:text-slate-100">
+  <div id="root" class="h-full"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // --- Helpers -----------------------------------------------------------
+    const api = {
+      async get(path) {
+        try {
+          const res = await fetch(path, { headers: { 'Accept': 'application/json' } });
+          if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+          return { ok: true, data: await res.json() };
+        } catch (e) {
+          return { ok: false, error: String(e) };
+        }
+      }
+    };
+
+    // Demo fallback data when API is unavailable
+    const fallback = {
+      health: { status: 'ok' },
+      flags: [
+        { key: 'safe_mode', value: true },
+        { key: 'version', value: '0.1.0' }
+      ],
+      accounts: [
+        { id: 1, title: 'Ops Bot', phone: '+1•••1234', status: 'ready', lastSeen: '2025-09-02T11:10:00Z' },
+        { id: 2, title: 'Bulk Sender 01', phone: '+1•••5678', status: 'cooldown', lastSeen: '2025-09-03T08:40:00Z' },
+        { id: 3, title: 'Bulk Sender 02', phone: '+44•••1122', status: 'error', lastSeen: '2025-08-31T20:00:00Z' }
+      ],
+      jobs: [
+        { id: 'demo-1', queue: 'jobs', type: 'sleep', status: 'started', progress: 35, enqueuedAt: '2025-09-04T10:00:00Z' },
+        { id: 'demo-2', queue: 'jobs', type: 'send_batch', status: 'queued', progress: 0, enqueuedAt: '2025-09-04T09:50:00Z' },
+        { id: 'demo-3', queue: 'jobs', type: 'send_batch', status: 'finished', progress: 100, enqueuedAt: '2025-09-03T17:22:00Z' }
+      ]
+    };
+
+    const cn = (...c) => c.filter(Boolean).join(' ');
+    const fmtDate = (iso) => iso ? new Date(iso).toLocaleString() : '—';
+
+    function Badge({ children, tone='slate' }){
+      const tones = {
+        green: 'bg-green-100 text-green-700 ring-green-600/20 dark:bg-green-900/20 dark:text-green-300',
+        red: 'bg-rose-100 text-rose-700 ring-rose-600/20 dark:bg-rose-900/20 dark:text-rose-300',
+        amber: 'bg-amber-100 text-amber-800 ring-amber-700/20 dark:bg-amber-900/20 dark:text-amber-300',
+        blue: 'bg-blue-100 text-blue-700 ring-blue-600/20 dark:bg-blue-900/20 dark:text-blue-300',
+        slate: 'bg-slate-100 text-slate-700 ring-slate-600/20 dark:bg-slate-800 dark:text-slate-200'
+      };
+      return <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ring-1 ring-inset', tones[tone])}>{children}</span>;
+    }
+
+    function HealthPill({ status='unknown' }){
+      const tone = status === 'ok' ? 'green' : status === 'degraded' ? 'amber' : 'red';
+      const label = status === 'ok' ? 'Healthy' : status === 'degraded' ? 'Degraded' : 'Down';
+      return <Badge tone={tone}>● {label}</Badge>;
+    }
+
+    function Progress({ value=0 }){
+      return (
+        <div className="w-full h-2 rounded-full bg-slate-200/60 dark:bg-slate-700/60 overflow-hidden">
+          <div className="h-full bg-brand-500 dark:bg-brand-400 transition-all" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+        </div>
+      );
+    }
+
+    function Icon({ name, className='w-5 h-5' }){
+      const icons = {
+        sun: (<svg viewBox="0 0 24 24" fill="currentColor" className={className}><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.48 14.32l1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM12 4V1h-0v3h0zm0 19v-3h0v3h0zM4 12H1v0h3v0zm19 0h-3v0h3v0zM6.76 19.16l-1.42 1.42-1.79-1.8 1.41-1.41 1.8 1.79zM20.45 4.46l-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79z"/><circle cx="12" cy="12" r="5"></circle></svg>),
+        moon: (<svg viewBox="0 0 24 24" fill="currentColor" className={className}><path d="M21.64 13a9 9 0 01-11.31-11.31A10 10 0 1021.64 13z"/></svg>),
+        refresh: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className={className}><path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M4 4v6h6M20 20v-6h-6M20 9A8 8 0 106 5"/></svg>),
+        search: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className={className}><path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M10 18a8 8 0 110-16 8 8 0 010 16z"/></svg>),
+        plus: (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className={className}><path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14"/></svg>)
+      };
+      return icons[name] || null;
+    }
+
+    function useDarkMode() {
+      const [dark, setDark] = useState(() => {
+        const saved = localStorage.getItem('ui:dark');
+        return saved ? saved === '1' : window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      });
+      useEffect(() => {
+        document.documentElement.classList.toggle('dark', dark);
+        localStorage.setItem('ui:dark', dark ? '1' : '0');
+      }, [dark]);
+      return [dark, setDark];
+    }
+
+    function useToasts() {
+      const [items, set] = useState([]);
+      const push = (title, desc) => {
+        const id = Math.random().toString(36).slice(2);
+        set((xs) => [...xs, { id, title, desc }]);
+        setTimeout(() => set((xs) => xs.filter((i) => i.id !== id)), 4000);
+      };
+      return { items, push };
+    }
+
+    // --- Main App ---------------------------------------------------------
+    function App(){
+      const [dark, setDark] = useDarkMode();
+      const toasts = useToasts();
+
+      const [loading, setLoading] = useState(true);
+      const [health, setHealth] = useState(null);
+      const [flags, setFlags] = useState([]);
+      const [accounts, setAccounts] = useState([]);
+      const [jobs, setJobs] = useState([]);
+      const [tab, setTab] = useState('accounts');
+      const [q, setQ] = useState('');
+
+      const load = async (showToast=true) => {
+        setLoading(true);
+        const [h, f, a, j] = await Promise.all([
+          api.get('/health'),
+          api.get('/flags'),
+          api.get('/accounts'),
+          api.get('/jobs')
+        ]);
+        // Apply data or fallbacks
+        setHealth(h.ok ? h.data : fallback.health);
+        setFlags(f.ok ? f.data : fallback.flags);
+        setAccounts(a.ok ? a.data : fallback.accounts);
+        setJobs(j.ok ? j.data : fallback.jobs);
+        setLoading(false);
+        if(showToast) toasts.push('Данные обновлены', !h.ok || !f.ok || !a.ok || !j.ok ? 'Часть данных показана из моков (API недоступно)' : 'Загружено с API');
+      };
+
+      useEffect(() => { load(false); }, []);
+
+      const kpi = useMemo(() => ({
+        accountsTotal: accounts.length,
+        accountsReady: accounts.filter(a => a.status === 'ready').length,
+        jobsQueued: jobs.filter(j => j.status === 'queued').length,
+        jobsActive: jobs.filter(j => j.status === 'started').length
+      }), [accounts, jobs]);
+
+      const filteredAccounts = useMemo(() => {
+        const s = q.trim().toLowerCase();
+        if (!s) return accounts;
+        return accounts.filter(a => (a.title + ' ' + a.phone + ' ' + a.status).toLowerCase().includes(s));
+      }, [q, accounts]);
+
+      const filteredJobs = useMemo(() => {
+        const s = q.trim().toLowerCase();
+        if (!s) return jobs;
+        return jobs.filter(j => (j.id + ' ' + j.type + ' ' + j.status + ' ' + (j.queue||'')).toLowerCase().includes(s));
+      }, [q, jobs]);
+
+      return (
+        <div className="min-h-full">
+          {/* Top bar */}
+          <header className="sticky top-0 z-40 backdrop-blur bg-white/70 dark:bg-slate-950/70 border-b border-white/40 dark:border-slate-800/60">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-xl bg-brand-600 text-white grid place-items-center shadow-soft">
+                  <span className="font-bold">TG</span>
+                </div>
+                <div className="hidden sm:block">
+                  <div className="text-sm text-slate-500 dark:text-slate-400">LaunchTG-lite</div>
+                  <div className="font-semibold">Админ-панель</div>
+                </div>
+                <div className="ml-3"><HealthPill status={health?.status || 'unknown'} /></div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="hidden md:flex items-center gap-2 rounded-xl bg-slate-100/70 dark:bg-slate-800/50 px-3 py-1.5 ring-1 ring-inset ring-slate-900/5 dark:ring-slate-700">
+                  <Icon name="search" className="w-4 h-4 opacity-60" />
+                  <input value={q} onChange={(e)=>setQ(e.target.value)} placeholder="Поиск по аккаунтам/задачам" className="bg-transparent outline-none text-sm w-64 placeholder:text-slate-400" />
+                </div>
+                <button onClick={()=>load()} title="Обновить" className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <Icon name="refresh" />
+                </button>
+                <button onClick={()=>setDark(!dark)} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800" title="Переключить тему">
+                  <Icon name={dark ? 'sun' : 'moon'} />
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* Page header */}
+          <div className="bg-gradient-to-r from-brand-50 to-transparent dark:from-slate-900/40 border-b border-slate-200/60 dark:border-slate-800">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Обзор</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Статус системы, аккаунты и очередь задач.</p>
+            </div>
+          </div>
+
+          {/* Content */}
+          <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+            {/* KPI cards */}
+            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <KpiCard title="Аккаунтов всего" value={kpi.accountsTotal} hint="/accounts" />
+              <KpiCard title="Готовы к работе" value={kpi.accountsReady} tone="green" />
+              <KpiCard title="Задач в очереди" value={kpi.jobsQueued} tone="amber" />
+              <KpiCard title="Активных задач" value={kpi.jobsActive} tone="blue" />
+            </section>
+
+            {/* Tabs */}
+            <section>
+              <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800">
+                <TabButton active={tab==='accounts'} onClick={()=>setTab('accounts')}>Аккаунты</TabButton>
+                <TabButton active={tab==='jobs'} onClick={()=>setTab('jobs')}>Задачи</TabButton>
+                <TabButton active={tab==='flags'} onClick={()=>setTab('flags')}>Флаги</TabButton>
+              </div>
+
+              {/* Panels */}
+              {tab==='accounts' && <AccountsTable loading={loading} items={filteredAccounts} />}
+              {tab==='jobs' && <JobsTable loading={loading} items={filteredJobs} />}
+              {tab==='flags' && <FlagsList loading={loading} items={flags} />}
+            </section>
+          </main>
+
+          {/* Toasts */}
+          <div className="fixed bottom-4 right-4 space-y-2 z-50">
+            {toasts.items.map(t => (
+              <div key={t.id} className="shadow-soft rounded-xl bg-white/95 dark:bg-slate-800/95 ring-1 ring-slate-900/5 dark:ring-slate-700 px-4 py-3 min-w-[260px]">
+                <div className="font-medium">{t.title}</div>
+                {t.desc && <div className="text-sm text-slate-500 dark:text-slate-400">{t.desc}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function KpiCard({ title, value, hint, tone }){
+      const tones = {
+        green: 'bg-green-50 dark:bg-green-900/10 text-green-700 dark:text-green-300',
+        amber: 'bg-amber-50 dark:bg-amber-900/10 text-amber-700 dark:text-amber-300',
+        blue: 'bg-blue-50 dark:bg-blue-900/10 text-blue-700 dark:text-blue-300',
+        default: 'bg-white/70 dark:bg-slate-900/40 text-slate-900 dark:text-slate-100'
+      };
+      return (
+        <div className={cn('rounded-2xl ring-1 ring-inset ring-slate-900/5 dark:ring-slate-800 p-4 shadow-soft', tone? '' : 'bg-white/70 dark:bg-slate-900/40')}>
+          <div className="text-sm text-slate-500 dark:text-slate-400">{title}</div>
+          <div className="mt-1 text-3xl font-semibold tracking-tight">{value}</div>
+          {hint && <div className="mt-2 text-xs text-slate-400">{hint}</div>}
+        </div>
+      );
+    }
+
+    function TabButton({ active, children, ...props }){
+      return (
+        <button {...props} className={cn('py-2 px-3 text-sm -mb-px border-b-2', active ? 'border-brand-500 text-brand-700 dark:text-brand-400' : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200')}>{children}</button>
+      );
+    }
+
+    function AccountsTable({ loading, items }){
+      return (
+        <div className="mt-4 overflow-hidden rounded-2xl ring-1 ring-slate-900/5 dark:ring-slate-800 bg-white/70 dark:bg-slate-900/40">
+          <div className="max-h-[520px] overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50/90 dark:bg-slate-900/80 backdrop-blur border-b border-slate-200/60 dark:border-slate-800">
+                <tr>
+                  <th className="text-left font-semibold px-4 py-3">Название</th>
+                  <th className="text-left font-semibold px-4 py-3">Телефон</th>
+                  <th className="text-left font-semibold px-4 py-3">Статус</th>
+                  <th className="text-left font-semibold px-4 py-3">Последняя активность</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && Array.from({length:5}).map((_,i)=> (
+                  <tr key={'sk'+i} className="animate-pulse">
+                    <td className="px-4 py-3"><div className="h-4 w-40 bg-slate-200/70 dark:bg-slate-700/50 rounded"/></td>
+                    <td className="px-4 py-3"><div className="h-4 w-32 bg-slate-200/70 dark:bg-slate-700/50 rounded"/></td>
+                    <td className="px-4 py-3"><div className="h-5 w-20 bg-slate-200/70 dark:bg-slate-700/50 rounded-full"/></td>
+                    <td className="px-4 py-3"><div className="h-4 w-44 bg-slate-200/70 dark:bg-slate-700/50 rounded"/></td>
+                  </tr>
+                ))}
+                {!loading && items.map((a) => (
+                  <tr key={a.id} className="odd:bg-white/60 even:bg-slate-50/40 dark:odd:bg-slate-900/30 dark:even:bg-slate-900/20">
+                    <td className="px-4 py-3 font-medium">{a.title}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{a.phone}</td>
+                    <td className="px-4 py-3">
+                      {a.status === 'ready' && <Badge tone='green'>готов</Badge>}
+                      {a.status === 'cooldown' && <Badge tone='amber'>кулдаун</Badge>}
+                      {a.status === 'error' && <Badge tone='red'>ошибка</Badge>}
+                      {!['ready','cooldown','error'].includes(a.status) && <Badge>{a.status}</Badge>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{fmtDate(a.lastSeen)}</td>
+                  </tr>
+                ))}
+                {!loading && items.length===0 && (
+                  <tr><td colSpan="4" className="px-4 py-10 text-center text-slate-500">Нет аккаунтов по фильтру</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function JobsTable({ loading, items }){
+      return (
+        <div className="mt-4 overflow-hidden rounded-2xl ring-1 ring-slate-900/5 dark:ring-slate-800 bg-white/70 dark:bg-slate-900/40">
+          <div className="max-h-[520px] overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50/90 dark:bg-slate-900/80 backdrop-blur border-b border-slate-200/60 dark:border-slate-800">
+                <tr>
+                  <th className="text-left font-semibold px-4 py-3">ID</th>
+                  <th className="text-left font-semibold px-4 py-3">Тип</th>
+                  <th className="text-left font-semibold px-4 py-3">Очередь</th>
+                  <th className="text-left font-semibold px-4 py-3">Статус</th>
+                  <th className="text-left font-semibold px-4 py-3">Прогресс</th>
+                  <th className="text-left font-semibold px-4 py-3">Добавлена</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && Array.from({length:5}).map((_,i)=> (
+                  <tr key={'skj'+i} className="animate-pulse">
+                    <td className="px-4 py-3"><div className="h-4 w-44 bg-slate-200/70 dark:bg-slate-700/50 rounded"/></td>
+                    <td className="px-4 py-3"><div className="h-4 w-28 bg-slate-200/70 dark:bg-slate-700/50 rounded"/></td>
+                    <td className="px-4 py-3"><div className="h-4 w-20 bg-slate-200/70 dark:bg-slate-700/50 rounded"/></td>
+                    <td className="px-4 py-3"><div className="h-5 w-24 bg-slate-200/70 dark:bg-slate-700/50 rounded-full"/></td>
+                    <td className="px-4 py-3"><div className="h-2 w-40 bg-slate-200/70 dark:bg-slate-700/50 rounded"/></td>
+                    <td className="px-4 py-3"><div className="h-4 w-40 bg-slate-200/70 dark:bg-slate-700/50 rounded"/></td>
+                  </tr>
+                ))}
+                {!loading && items.map((j) => (
+                  <tr key={j.id} className="odd:bg-white/60 even:bg-slate-50/40 dark:odd:bg-slate-900/30 dark:even:bg-slate-900/20">
+                    <td className="px-4 py-3 font-mono text-xs">{j.id}</td>
+                    <td className="px-4 py-3">{j.type}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{j.queue || '—'}</td>
+                    <td className="px-4 py-3">
+                      {j.status === 'queued' && <Badge tone='blue'>в очереди</Badge>}
+                      {j.status === 'started' && <Badge tone='amber'>выполняется</Badge>}
+                      {j.status === 'finished' && <Badge tone='green'>готово</Badge>}
+                      {j.status === 'failed' && <Badge tone='red'>ошибка</Badge>}
+                      {!['queued','started','finished','failed'].includes(j.status) && <Badge>{j.status}</Badge>}
+                    </td>
+                    <td className="px-4 py-3 w-56"><Progress value={Number(j.progress||0)} /></td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{fmtDate(j.enqueuedAt)}</td>
+                  </tr>
+                ))}
+                {!loading && items.length===0 && (
+                  <tr><td colSpan="6" className="px-4 py-10 text-center text-slate-500">Нет задач по фильтру</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function FlagsList({ loading, items }){
+      return (
+        <div className="mt-4 rounded-2xl ring-1 ring-slate-900/5 dark:ring-slate-800 bg-white/70 dark:bg-slate-900/40 p-4">
+          {loading ? (
+            <div className="animate-pulse space-y-3">
+              <div className="h-4 w-48 bg-slate-200/70 dark:bg-slate-700/50 rounded"/>
+              <div className="h-4 w-80 bg-slate-200/70 dark:bg-slate-700/50 rounded"/>
+              <div className="h-4 w-64 bg-slate-200/70 dark:bg-slate-700/50 rounded"/>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {items.map((f,i) => (
+                <div key={i} className="flex items-center justify-between rounded-xl border border-slate-200/70 dark:border-slate-800/80 px-3 py-2">
+                  <div className="font-mono text-xs">{f.key}</div>
+                  <Badge tone={typeof f.value==='boolean' ? (f.value ? 'green' : 'red') : 'slate'}>
+                    {String(f.value)}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Mount app
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
